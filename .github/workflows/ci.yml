@@ -44,4 +44,4 @@ jobs:
         version: ${{ matrix.version }}
 
     - name: Test
-      run: nimble -y --silent test
+      run: nimble -y  test
