@@ -2,6 +2,7 @@
 !**/
 !*.*
 *.mp4
+*.m4a
 nimbledeps/
 output.json
 tests/data/output.json
