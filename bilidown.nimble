@@ -13,3 +13,4 @@ bin           = @["bilidown"]
 
 requires "nim >= 2.0.0"
 requires "checksums"
+requires "nregex"

@@ -1,6 +1,7 @@
 ## Utility functions for bilidown
 
-import std/[strutils, uri, osproc, tables, re]
+import std/[strutils, uri, osproc, tables]
+import nregex
 
 const
   BilibiliBaseUrl* = "https://www.bilibili.com"
@@ -109,8 +110,11 @@ proc sanitizeFilename*(filename: string): string =
   for c in invalidChars:
     result = result.replace(c, "_")
   
-  # Also remove control characters
-  result = result.replace(re"[\x00-\x1f\x7f]", "")
+  var sanitized = ""
+  for c in result:
+    if ord(c) >= 32 and ord(c) != 127:  # Skip control characters (0-31) and DEL (127)
+      sanitized.add(c)
+  result = sanitized
   
   # Limit length
   if result.len > 200:
