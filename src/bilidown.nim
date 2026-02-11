@@ -470,6 +470,30 @@ proc mergeWithFfmpeg*(videoPath, audioPath, outputPath: string): bool =
   let res = execShellCmd(cmd)
   return res == 0
 
+proc downloadAudioOnly*(downloader: BiliDownloader, videoInfo: BiliVideoInfo, 
+                       outputDir: string = "./downloads"): Future[string] {.async.} =
+  ## Download only the audio stream from a Bilibili video
+  ## Returns the path to the downloaded audio file
+  
+  if videoInfo.audioStreams.len == 0:
+    raise newException(DownloadError, "No audio streams available")
+  
+  # Select best audio stream (first one is usually the best quality)
+  let selectedAudio = videoInfo.audioStreams[0]
+  
+  # Create output directory if it doesn't exist
+  createDir(outputDir)
+  
+  # Download audio
+  let safeTitle = sanitizeFilename(videoInfo.title)
+  let baseName = if safeTitle.len > 0: safeTitle else: videoInfo.bvid
+  let audioPath = outputDir / baseName & ".m4a"
+  
+  echo "Downloading audio stream..."
+  await downloadWithProgress(downloader.httpClient, selectedAudio.baseUrl, audioPath)
+  
+  return audioPath
+
 proc downloadVideo*(downloader: BiliDownloader, videoInfo: BiliVideoInfo, 
                    outputDir: string = "./downloads",
                    quality: VideoQuality = vq1080P,
@@ -552,6 +576,14 @@ proc downloadBilibiliVideo*(url: string, outputDir: string = "./downloads",
 
   result = await downloader.download(url, outputDir, quality)
 
+proc downloadBilibiliAudio*(url: string, outputDir: string = "./downloads"): Future[string] {.async.} =
+  ## Synchronous wrapper for downloading only audio from Bilibili videos
+  var downloader = newBiliDownloader()
+  defer: downloader.close()
+
+  let videoInfo = await downloader.fetchVideoInfo(url)
+  result = await downloader.downloadAudioOnly(videoInfo, outputDir)
+
 when isMainModule:
   # CLI interface
   import std/[parseopt]
@@ -559,6 +591,7 @@ when isMainModule:
   var url = ""
   var outputDir = "./downloads"
   var quality = vq1080P
+  var audioOnly = false
   
   for kind, key, val in getOpt():
     case kind
@@ -578,6 +611,8 @@ when isMainModule:
         except:
           echo "Invalid quality value: " & val
           quit(1)
+      of "audio-only", "a":
+        audioOnly = true
       of "help", "h":
         echo """
 Bilibili Video Downloader
@@ -588,6 +623,7 @@ Options:
   -u, --url <url>        Bilibili video URL or BV ID
   -o, --output <dir>     Output directory (default: ./downloads)
   -q, --quality <q>      Video quality number (default: 80)
+  -a, --audio-only       Download audio only (M4A format)
   -h, --help             Show this help
 
 Quality options:
@@ -607,6 +643,8 @@ Quality options:
 Examples:
   bilidown https://www.bilibili.com/video/BV1xx411c7mD
   bilidown BV1xx411c7mD -o ./videos -q 120
+  bilidown BV1xx411c7mD -a                    # Audio only
+  bilidown BV1xx411c7mD --audio-only -o ./music
         """
         quit(0)
     of cmdEnd:
@@ -624,7 +662,10 @@ Examples:
     echo "Please install ffmpeg for best results."
   
   try:
-    let outputPath = waitFor downloadBilibiliVideo(url, outputDir, quality)
+    let outputPath = if audioOnly:
+      waitFor downloadBilibiliAudio(url, outputDir)
+    else:
+      waitFor downloadBilibiliVideo(url, outputDir, quality)
     echo "Download complete: " & outputPath
   except Exception as e:
     echo "Error: " & e.msg

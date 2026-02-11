@@ -1,4 +1,4 @@
-# Bilidown github ci badge
+# Bilidown
 
 ![CI](https://github.com/bung87/bilidown/actions/workflows/ci.yml/badge.svg)
 
@@ -7,6 +7,7 @@ A Bilibili video downloader built with Nim using direct API calls.
 ## Features
 
 - Download Bilibili videos by URL or BV ID
+- Download audio-only streams (M4A format)
 - Direct API integration with Bilibili's official APIs
 - Support for multiple video qualities (240P to 8K)
 - DASH format support with separate video and audio streams
@@ -34,6 +35,21 @@ bilidown -u https://www.bilibili.com/video/BV1xx411c7mD -o ./videos
 
 # Specify quality
 bilidown -u BV1xx411c7mD -q 120  # 4K quality
+
+# Download audio only
+bilidown -u BV1xx411c7mD -a
+bilidown --audio-only https://www.bilibili.com/video/BV1xx411c7mD -o ./music
+```
+
+### Options
+
+```
+Options:
+  -u, --url <url>        Bilibili video URL or BV ID
+  -o, --output <dir>     Output directory (default: ./downloads)
+  -q, --quality <q>      Video quality number (default: 80)
+  -a, --audio-only       Download audio only (M4A format)
+  -h, --help             Show this help
 ```
 
 ### Quality Options
@@ -82,6 +98,13 @@ proc asyncDownload() {.async.} =
     await downloader.close()
 
 waitFor asyncDownload()
+
+# Audio-only download
+let audioPath = downloadBilibiliAudio(
+  "https://www.bilibili.com/video/BV1xx411c7mD",
+  outputDir = "./music"
+)
+echo "Audio downloaded to: " & audioPath
 ```
 
 ## How It Works
