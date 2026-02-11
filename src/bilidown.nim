@@ -26,37 +26,9 @@ type
     vqDolby = 126
     vq8K = 127
 
-  VideoStream* = object
-    baseUrl*: string
-    backupUrls*: seq[string]
-    bandwidth*: int
-    codecs*: string
-    quality*: VideoQuality
-    qualityLabel*: string
-    width*: int
-    height*: int
 
-  AudioStream* = object
-    baseUrl*: string
-    backupUrls*: seq[string]
-    bandwidth*: int
-    codecs*: string
-    id*: string
-
-  BiliVideoInfo* = object
-    bvid*: string
-    cid*: string
-    aid*: string
-    title*: string
-    description*: string
-    duration*: int
-    cover*: string
-    owner*: string
-    videoStreams*: seq[VideoStream]
-    audioStreams*: seq[AudioStream]
 
   DownloadError* = object of CatchableError
-
 type
   # Video info API response
   VideoInfoResponse* = object
@@ -126,8 +98,7 @@ type
   WbiKeyCache = object
     key: string
     ts: float
-  
-  # Json-compatible types for play info parsing (without Option wrapper for std/json)
+
   PlayInfoDashVideo* = object
     baseUrl*: string
     backupUrl*: seq[string]
@@ -147,7 +118,7 @@ type
   PlayInfoDash* = object
     video*: seq[PlayInfoDashVideo]
     audio*: seq[PlayInfoDashAudio]
-    flac*: PlayInfoDashAudio
+    flac*: Option[PlayInfoDashAudio]
   
   PlayInfoDurlItem* = object
     url*: string
@@ -155,7 +126,19 @@ type
   
   PlayInfoData* = object
     dash*: PlayInfoDash
-    durl*: seq[PlayInfoDurlItem]
+    durl*: Option[seq[PlayInfoDurlItem]]
+
+  BiliVideoInfo* = object
+    bvid*: string
+    cid*: string
+    aid*: string
+    title*: string
+    description*: string
+    duration*: int
+    cover*: string
+    owner*: string
+    videoStreams*: seq[PlayInfoDashVideo]
+    audioStreams*: seq[PlayInfoDashAudio]
 
 type
   BiliDownloader* = ref object
@@ -274,8 +257,8 @@ proc signWbi*(downloader: BiliDownloader, params: ParamSeq) {.async.} =
   let wRid = getMD5(query & mixinKey)
   params[].add(("w_rid", wRid))
 
-proc getVideoInfo*(downloader: BiliDownloader, bvid: string): Future[BiliVideoInfo] {.async.} =
-  ## Get video info using jsony for robust JSON parsing
+proc getVideoInfoData*(downloader: BiliDownloader, bvid: string): Future[VideoInfoData] {.async.} =
+  ## Get video info data 
   
   echo "Fetching video info for " & bvid & "..."
   
@@ -296,125 +279,48 @@ proc getVideoInfo*(downloader: BiliDownloader, bvid: string): Future[BiliVideoIn
     if response.data.isNone:
       raise newException(DownloadError, "No video data in response")
     
-    # Extract video data from Option
-    let videoData = response.data.get()
+    # Return the video data directly
+    result = response.data.get()
     
-    # Build result object with type-safe field access
-    result.bvid = bvid
-    result.cid = $videoData.cid
-    result.aid = $videoData.aid
-    result.title = videoData.title
-    result.owner = videoData.owner.name
-    result.duration = videoData.duration
-    result.cover = videoData.pic
-    result.description = videoData.desc
-    
-    if result.cid.len == 0:
+    if $result.cid == "0":
       raise newException(DownloadError, "Could not get CID for video")
     
     echo "Found video: " & result.title
-    echo "CID: " & result.cid
+    echo "CID: " & $result.cid
     
   except Exception as e:
     # Handle other exceptions
     raise newException(DownloadError, "Failed to get video info: " & e.msg)
 
-proc parsePlayInfo*(response: JsonNode): tuple[videoStreams: seq[VideoStream], audioStreams: seq[AudioStream]] =
-  ## Parse play info data using std/json with manual parsing for better error handling
+proc parsePlayInfo*(response: JsonNode): tuple[videoStreams: seq[PlayInfoDashVideo], audioStreams: seq[PlayInfoDashAudio]] =
+  ## Parse play info data
   result.videoStreams = @[]
   result.audioStreams = @[]
+
+  let playInfoData = response["data"].to(PlayInfoData)
   
-  # Check response code
-  if response["code"].getInt() != 0:
-    echo "Warning: Playurl API returned error code: ", response["code"].getInt()
-    if response["message"].kind != JNull:
-      echo "Message: ", response["message"].getStr()
-    return (videoStreams: @[], audioStreams: @[])
-  
-  # Check if data exists
-  if not response.hasKey("data") or response["data"].kind == JNull:
-    echo "Warning: No data section found in play info response"
-    return (videoStreams: @[], audioStreams: @[])
-  
-  # Parse the data section manually for better error handling
-  let dataNode = response["data"]
-  
-  # Parse dash data if available
-  if dataNode.hasKey("dash") and dataNode["dash"].kind == JObject:
-    let dashNode = dataNode["dash"]
+  if playInfoData.dash.video.len > 0:
+    # Use dash video streams directly
+    result.videoStreams = playInfoData.dash.video
     
-    # Parse video streams
-    if dashNode.hasKey("video") and dashNode["video"].kind == JArray:
-      for videoItem in dashNode["video"]:
-        var stream = VideoStream()
-        
-        if videoItem.hasKey("baseUrl"):
-          stream.baseUrl = videoItem["baseUrl"].getStr()
-        if videoItem.hasKey("backupUrl") and videoItem["backupUrl"].kind == JArray:
-          for backup in videoItem["backupUrl"]:
-            stream.backupUrls.add(backup.getStr())
-        if videoItem.hasKey("bandwidth"):
-          stream.bandwidth = videoItem["bandwidth"].getInt()
-        if videoItem.hasKey("codecs"):
-          stream.codecs = videoItem["codecs"].getStr()
-        if videoItem.hasKey("id"):
-          let qualityId = videoItem["id"].getInt()
-          stream.quality = cast[VideoQuality](qualityId)
-        if videoItem.hasKey("width"):
-          stream.width = videoItem["width"].getInt()
-        if videoItem.hasKey("height"):
-          stream.height = videoItem["height"].getInt()
-        
-        stream.qualityLabel = $stream.width & "x" & $stream.height
-        if stream.qualityLabel == "0x0":
-          stream.qualityLabel = parseQualityLabel(ord(stream.quality))
-        
-        result.videoStreams.add(stream)
-    
-    # Parse audio streams
-    if dashNode.hasKey("audio") and dashNode["audio"].kind == JArray:
-      for audioItem in dashNode["audio"]:
-        var stream = AudioStream()
-        
-        if audioItem.hasKey("baseUrl"):
-          stream.baseUrl = audioItem["baseUrl"].getStr()
-        if audioItem.hasKey("backupUrl") and audioItem["backupUrl"].kind == JArray:
-          for backup in audioItem["backupUrl"]:
-            stream.backupUrls.add(backup.getStr())
-        if audioItem.hasKey("bandwidth"):
-          stream.bandwidth = audioItem["bandwidth"].getInt()
-        if audioItem.hasKey("codecs"):
-          stream.codecs = audioItem["codecs"].getStr()
-        if audioItem.hasKey("id"):
-          stream.id = $audioItem["id"].getInt()
-        
-        result.audioStreams.add(stream)
+    # Use dash audio streams directly
+    result.audioStreams = playInfoData.dash.audio
     
     # Handle FLAC if present
-    if dashNode.hasKey("flac") and dashNode["flac"].kind == JObject:
-      let flacNode = dashNode["flac"]
-      if flacNode.hasKey("baseUrl"):
-        var stream = AudioStream()
-        stream.baseUrl = flacNode["baseUrl"].getStr()
-        if flacNode.hasKey("backupUrl") and flacNode["backupUrl"].kind == JArray:
-          for backup in flacNode["backupUrl"]:
-            stream.backupUrls.add(backup.getStr())
-        if flacNode.hasKey("bandwidth"):
-          stream.bandwidth = flacNode["bandwidth"].getInt()
-        stream.codecs = "flac"
-        stream.id = "flac"
-        result.audioStreams.add(stream)
+    if playInfoData.dash.flac.isSome:
+      result.audioStreams.add(playInfoData.dash.flac.get)
   
-  # Parse durl format if present
-  if dataNode.hasKey("durl") and dataNode["durl"].kind == JArray:
-    for durlItem in dataNode["durl"]:
-      var stream = VideoStream()
-      if durlItem.hasKey("url"):
-        stream.baseUrl = durlItem["url"].getStr()
-      if durlItem.hasKey("backupUrl") and durlItem["backupUrl"].kind == JArray:
-        for backup in durlItem["backupUrl"]:
-          stream.backupUrls.add(backup.getStr())
-      stream.qualityLabel = "direct"
+  # Handle durl format (alternative to dash)
+  if playInfoData.durl.isSome and playInfoData.durl.get.len > 0:
+    for durlItem in playInfoData.durl.get:
+      var stream: PlayInfoDashVideo
+      stream.baseUrl = durlItem.url
+      stream.backupUrl = durlItem.backupUrl
+      stream.id = 32  # Default quality ID for direct streams (360P)
+      stream.width = 0
+      stream.height = 0
+      stream.bandwidth = 0
+      stream.codecs = ""
       result.videoStreams.add(stream)
   
   return (videoStreams: result.videoStreams, audioStreams: result.audioStreams)
@@ -475,7 +381,7 @@ proc fetchVideoInfo*(downloader: BiliDownloader, url: string): Future[BiliVideoI
   echo "BV ID: " & bvid
   
   # Get video info (CID, title, etc.)
-  result = await downloader.getVideoInfo(bvid)
+  let videoInfoData = await downloader.getVideoInfoData(bvid)
   
   # Get stream URLs using jsony approach
   echo "Fetching stream URLs (jsony)..."
@@ -483,7 +389,7 @@ proc fetchVideoInfo*(downloader: BiliDownloader, url: string): Future[BiliVideoI
   # Build params
   var params = new(seq[tuple[key, val: string]])
   params[].add(("bvid", bvid))
-  params[].add(("cid", result.cid))
+  params[].add(("cid", $videoInfoData.cid))
   params[].add(("fnval", "4048"))  # Request DASH format with all codecs
   params[].add(("fourk", "1"))
   params[].add(("qn", "127"))  # Request quality
@@ -500,10 +406,33 @@ proc fetchVideoInfo*(downloader: BiliDownloader, url: string): Future[BiliVideoI
   let playUrl = "https://api.bilibili.com/x/player/wbi/playurl?" & query
 
   let playContent = await downloader.httpClient.getContent(playUrl)
+  let jsn = parseJson(playContent)
+  
+  # Check for API error codes before parsing
+  if jsn.hasKey("code"):
+    let code = jsn["code"].getInt()
+    if code != 0:
+      var errorMsg = "Playurl API error: " & $code
+      if jsn.hasKey("message"):
+        errorMsg &= " - " & jsn["message"].getStr()
+      echo "Warning: " & errorMsg
+      # Return empty streams on API error
+      result.videoStreams = @[]
+      result.audioStreams = @[]
+      return result
   
   # Parse play info using jsony
-  let (videoStreams, audioStreams) = parsePlayInfo(parseJson(playContent))
+  let (videoStreams, audioStreams) = parsePlayInfo(jsn)
   
+  # Build BiliVideoInfo result
+  result.bvid = bvid
+  result.cid = $videoInfoData.cid
+  result.aid = $videoInfoData.aid
+  result.title = videoInfoData.title
+  result.owner = videoInfoData.owner.name
+  result.duration = videoInfoData.duration
+  result.cover = videoInfoData.pic
+  result.description = videoInfoData.desc
   result.videoStreams = videoStreams
   result.audioStreams = audioStreams
   
@@ -552,12 +481,12 @@ proc downloadVideo*(downloader: BiliDownloader, videoInfo: BiliVideoInfo,
     raise newException(DownloadError, "No video streams available")
   
   # Select best video stream based on quality preference
-  var selectedVideo: VideoStream
+  var selectedVideo: PlayInfoDashVideo
   var foundQuality = false
   
   # Try to find exact quality match first
   for stream in videoInfo.videoStreams:
-    if stream.quality == quality:
+    if stream.id == ord(quality):
       selectedVideo = stream
       foundQuality = true
       break
@@ -566,10 +495,10 @@ proc downloadVideo*(downloader: BiliDownloader, videoInfo: BiliVideoInfo,
   if not foundQuality:
     selectedVideo = videoInfo.videoStreams[0]
     for stream in videoInfo.videoStreams:
-      if ord(stream.quality) > ord(selectedVideo.quality):
+      if stream.id > selectedVideo.id:
         selectedVideo = stream
   
-  echo "Selected video quality: " & selectedVideo.qualityLabel
+  echo "Selected video quality: " & parseQualityLabel(selectedVideo.id)
   
   # Create output directory if it doesn't exist
   createDir(outputDir)
