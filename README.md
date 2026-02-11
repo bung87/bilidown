@@ -1,4 +1,6 @@
-# Bilidown
+# Bilidown github ci badge
+
+![CI](https://github.com/bung87/bilidown/actions/workflows/Test/badge.svg)
 
 A Bilibili video downloader built with Nim using direct API calls.
 
