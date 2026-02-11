@@ -513,28 +513,6 @@ proc fetchVideoInfo*(downloader: BiliDownloader, url: string): Future[BiliVideoI
   if result.videoStreams.len == 0:
     raise newException(DownloadError, "No video streams found. Video may require login or be region-restricted.")
 
-proc fetchVideoInfoJsony*(downloader: BiliDownloader, url: string): Future[BiliVideoInfo] {.async.} =
-  ## Fetch video information and stream URLs using jsony
-  
-  # Extract BV ID from URL
-  let bvid = extractBvid(url)
-  echo "BV ID (jsony): " & bvid
-  
-  # Get video info using jsony
-  result = await downloader.getVideoInfo(bvid)
-  
-  # Get stream URLs using jsony
-  let playData = await downloader.getPlayInfo(bvid, result.cid)
-  let (videoStreams, audioStreams) =  parsePlayInfo(playData)
-  
-  result.videoStreams = videoStreams
-  result.audioStreams = audioStreams
-  
-  echo "Found " & $result.videoStreams.len & " video streams (jsony)"
-  echo "Found " & $result.audioStreams.len & " audio streams (jsony)"
-  
-  if result.videoStreams.len == 0:
-    raise newException(DownloadError, "No video streams found (jsony). Video may require login or be region-restricted.")
 
 proc downloadWithProgress*(client: AsyncHttpClient, url: string, outputPath: string) {.async.} =
   ## Download a file with progress indication
