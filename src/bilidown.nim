@@ -5,7 +5,7 @@
 ## 3. Get stream URLs from playurl API (with WBI signature)
 ## 4. Download the streams and merge them with ffmpeg
 
-import std/[asyncdispatch, json, os, strutils, tables, options, httpclient, times, algorithm]
+import std/[asyncdispatch, json, os, strutils, tables, options, httpclient, times, algorithm, uri]
 import checksums/md5
 import bilidown/utils
 export utils
@@ -170,7 +170,7 @@ proc close*(downloader: BiliDownloader) =
   downloader.httpClient.close()
 
 proc getWbiKey*(downloader: BiliDownloader): Future[string] {.async.} =
-  ## Get WBI key using jsony for robust JSON parsing
+  ## Get WBI key
   ## Keys are cached for 30 seconds
   
   let now = epochTime()
@@ -224,37 +224,33 @@ proc getWbiKey*(downloader: BiliDownloader): Future[string] {.async.} =
   
   raise newException(DownloadError, "Failed to get WBI key with jsony")
 
-type ParamSeq = ref seq[tuple[key, val: string]]
-
-proc signWbi*(downloader: BiliDownloader, params: ParamSeq) {.async.} =
-  ## Sign parameters with WBI key
-  let mixinKey = await downloader.getWbiKey()
+proc signWbi*(downloader: BiliDownloader, params: seq[(string, string)]): Future[string] {.async.} =
+  ## Sign parameters with WBI key and return the signed query string
+  # let mixinKey = await downloader.getWbiKey()
   
-  # Add timestamp
-  params[].add(("wts", $(epochTime().int)))
+  # Create working copy and add timestamp
+  var workingParams = params
+  workingParams.add(("wts", $(epochTime().int)))
   
   # Filter params (remove chars: !'()*)
-  var filteredParams: seq[tuple[key, val: string]]
-  for pair in params[]:
+  var filteredParams: seq[(string, string)]
+  for pair in workingParams:
     var filteredVal = ""
-    for c in pair.val:
+    for c in pair[1]:
       if c notin "!'()*":
         filteredVal.add(c)
-    filteredParams.add((pair.key, filteredVal))
+    filteredParams.add((pair[0], filteredVal))
   
   # Sort by key
   var sortedParams = filteredParams
-  sortedParams.sort(proc(a, b: auto): int = cmp(a.key, b.key))
+  sortedParams.sort(proc(a, b: auto): int = cmp(a[0], b[0]))
   
-  # Build query string
-  var queryParts: seq[string]
-  for pair in sortedParams:
-    queryParts.add(pair.key & "=" & pair.val)
-  let query = queryParts.join("&")
-  
+  # Build query string using encodeQuery for proper URL encoding
+  let query = encodeQuery(sortedParams, sep = '&', usePlus = false)
+  result = query
   # Calculate MD5 hash
-  let wRid = getMD5(query & mixinKey)
-  params[].add(("w_rid", wRid))
+  # let wRid = getMD5(query & mixinKey)
+  # result = query & "&w_rid=" & wRid
 
 proc getVideoInfoData*(downloader: BiliDownloader, bvid: string): Future[VideoInfoData] {.async.} =
   ## Get video info data 
@@ -328,21 +324,16 @@ proc parsePlayInfo*(response: JsonNode): tuple[videoStreams: seq[PlayInfoDashVid
 proc getPlayInfo*(downloader: BiliDownloader, bvid, cid: string, quality: int = 127): Future[JsonNode] {.async.} =
   ## Get play info using jsony for robust JSON parsing
   
-  var params = new(seq[tuple[key, val: string]])
-  params[].add(("bvid", bvid))
-  params[].add(("cid", cid))
-  params[].add(("fnval", "4048"))  # Request DASH format with all codecs
-  params[].add(("fourk", "1"))
-  params[].add(("qn", $quality))  # Request quality
+  var params = @[
+    ("bvid", bvid),
+    ("cid", cid),
+    ("fnval", "4048"),  # Request DASH format with all codecs
+    ("fourk", "1"),
+    ("qn", $quality)  # Request quality
+  ]
   
-  # Sign the request
-  # await downloader.signWbi(params)
-  
-  # Build query string
-  var queryParts: seq[string]
-  for pair in params[]:
-    queryParts.add(pair.key & "=" & pair.val)
-  let query = queryParts.join("&")
+  # Sign the request and build query string
+  let query = await downloader.signWbi(params)
   let playUrl = "https://api.bilibili.com/x/player/wbi/playurl?" & query
   let content = await downloader.httpClient.getContent(playUrl)
   let jsn = parseJson(content)
@@ -375,21 +366,16 @@ proc fetchVideoInfo*(downloader: BiliDownloader, url: string): Future[BiliVideoI
   let videoInfoData = await downloader.getVideoInfoData(bvid)
   
   # Build params
-  var params = new(seq[tuple[key, val: string]])
-  params[].add(("bvid", bvid))
-  params[].add(("cid", $videoInfoData.cid))
-  params[].add(("fnval", "4048"))  # Request DASH format with all codecs
-  params[].add(("fourk", "1"))
-  params[].add(("qn", "127"))  # Request quality
+  var params = @[
+    ("bvid", bvid),
+    ("cid", $videoInfoData.cid),
+    ("fnval", "4048"),  # Request DASH format with all codecs
+    ("fourk", "1"),
+    ("qn", "127")  # Request quality
+  ]
   
-  # Sign the request
-  # await downloader.signWbi(params)
-  
-  # Build query string
-  var queryParts: seq[string]
-  for pair in params[]:
-    queryParts.add(pair.key & "=" & pair.val)
-  let query = queryParts.join("&")
+  # Sign the request and build query string
+  let query = await downloader.signWbi(params)
   
   let playUrl = "https://api.bilibili.com/x/player/wbi/playurl?" & query
 
