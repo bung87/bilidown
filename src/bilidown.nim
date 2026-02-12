@@ -1,5 +1,4 @@
-## Bilibili Video Downloader using ChromeDevToolsProtocol
-## 
+## Bilibili Video Downloader
 ## This module follows yt-dlp's approach:
 ## 1. Extract BV ID from URL
 ## 2. Get CID from video info API
@@ -329,9 +328,6 @@ proc parsePlayInfo*(response: JsonNode): tuple[videoStreams: seq[PlayInfoDashVid
 proc getPlayInfo*(downloader: BiliDownloader, bvid, cid: string, quality: int = 127): Future[JsonNode] {.async.} =
   ## Get play info using jsony for robust JSON parsing
   
-  echo "Fetching stream URLs..."
-  
-  # Build params
   var params = new(seq[tuple[key, val: string]])
   params[].add(("bvid", bvid))
   params[].add(("cid", cid))
@@ -347,15 +343,10 @@ proc getPlayInfo*(downloader: BiliDownloader, bvid, cid: string, quality: int = 
   for pair in params[]:
     queryParts.add(pair.key & "=" & pair.val)
   let query = queryParts.join("&")
-  
   let playUrl = "https://api.bilibili.com/x/player/wbi/playurl?" & query
-  
   let content = await downloader.httpClient.getContent(playUrl)
-  
-
   let jsn = parseJson(content)
   
-  # Check for API error codes (fallback logic)
   if jsn.hasKey("code"):
     let code = jsn["code"].getInt()
     if code != 0:
@@ -382,9 +373,6 @@ proc fetchVideoInfo*(downloader: BiliDownloader, url: string): Future[BiliVideoI
   
   # Get video info (CID, title, etc.)
   let videoInfoData = await downloader.getVideoInfoData(bvid)
-  
-  # Get stream URLs using jsony approach
-  echo "Fetching stream URLs (jsony)..."
   
   # Build params
   var params = new(seq[tuple[key, val: string]])
@@ -416,7 +404,6 @@ proc fetchVideoInfo*(downloader: BiliDownloader, url: string): Future[BiliVideoI
       if jsn.hasKey("message"):
         errorMsg &= " - " & jsn["message"].getStr()
       echo "Warning: " & errorMsg
-      # Return empty streams on API error
       result.videoStreams = @[]
       result.audioStreams = @[]
       return result
@@ -570,14 +557,14 @@ proc download*(downloader: BiliDownloader, url: string,
 # Convenience synchronous wrapper
 proc downloadBilibiliVideo*(url: string, outputDir: string = "./downloads",
                            quality: VideoQuality = vq1080P): Future[string] {.async.} =
-  ## Synchronous wrapper for downloading Bilibili videos
+  ## downloading Bilibili videos
   var downloader = newBiliDownloader()
   defer: downloader.close()
 
   result = await downloader.download(url, outputDir, quality)
 
 proc downloadBilibiliAudio*(url: string, outputDir: string = "./downloads"): Future[string] {.async.} =
-  ## Synchronous wrapper for downloading only audio from Bilibili videos
+  ## downloading only audio from Bilibili videos
   var downloader = newBiliDownloader()
   defer: downloader.close()
 
